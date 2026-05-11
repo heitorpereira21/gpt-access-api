@@ -1,92 +1,91 @@
 import { supabaseAdmin } from '../lib/supabase'
 import crypto from 'crypto'
 
+export const config = {
+  api: {
+    // Importante: Algumas plataformas exigem o corpo bruto (raw body) para validar HMAC.
+    // Se a validação falhar, você precisará desabilitar o bodyParser aqui.
+    bodyParser: true,
+  },
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    console.log('Webhook: Method not allowed')
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
   const secret = process.env.EDUZZ_SECRET
   const signature = req.headers['x-eduzz-signature']
-  const rawBody = JSON.stringify(req.body)
+  
+  // 1. Correção da Assinatura: Usar o corpo bruto ou string estável
+  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body)
 
-  // Se não houver assinatura, assumimos que é teste do Eduzz → retorna 200
   if (!secret || !signature) {
-    console.log('Webhook: Missing secret or signature (test mode)')
+    console.log('Webhook: Modo teste ou segredo ausente')
     return res.status(200).json({ ok: true })
   }
 
-  // Validação de assinatura HMAC
   try {
     const hmac = crypto.createHmac('sha256', secret)
-    const digest = 'sha256=' + hmac.update(rawBody).digest('base64')
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest))) {
-      console.log('Webhook: Invalid signature')
+    // CORREÇÃO: Eduzz geralmente usa 'hex'. Se for 'sha256=', removemos o prefixo para comparar.
+    const hash = hmac.update(rawBody).digest('hex')
+    const expectedSignature = signature.replace('sha256=', '')
+
+    if (!crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(hash))) {
+      console.log('Webhook: Assinatura inválida')
       return res.status(401).json({ error: 'Invalid signature' })
     }
   } catch (err) {
-    console.error('Erro na validação da assinatura:', err)
+    console.error('Erro na validação:', err)
     return res.status(401).json({ error: 'Invalid signature' })
   }
 
-  console.log('Webhook: Signature validated, processing...')
-
   try {
-    let payload = req.body
+    const payload = req.body
+    const transaction = Array.isArray(payload) ? payload[0] : (payload.transaction || payload)
 
-    if (Array.isArray(payload)) {
-      payload = payload[0]
-    }
-
-    const transaction = payload.transaction || payload
-
-    // Ignorar transações não aprovadas
-    if (transaction.status !== 'approved') {
-      console.log(`Webhook: Ignored non-approved status: ${transaction.status}`)
+    // 2. Filtro de Status
+    if (transaction.status !== 'approved' && transaction.status !== 3) { // 3 costuma ser 'pago' na Eduzz
+      console.log(`Webhook: Status ignorado: ${transaction.status}`)
       return res.status(200).json({ ok: true })
     }
 
-    const email = transaction.buyer?.email || transaction.customer?.email
-    const transactionId = transaction.id || transaction.transaction_id
+    // 3. Normalização dos dados (Importante para o Supabase)
+    const rawEmail = transaction.buyer?.email || transaction.customer?.email || transaction.email_comprador
+    if (!rawEmail) throw new Error('E-mail não encontrado')
+    
+    const email = rawEmail.trim().toLowerCase() // Evita duplicatas por maiúsculas
+    const transactionId = String(transaction.id || transaction.transaction_id || transaction.transacao_id)
 
-    if (!email || !transactionId) {
-      console.log('Webhook: Missing email or transaction ID')
-      return res.status(400).json({ error: 'Missing email or transaction ID' })
-    }
-
-    const purchaseDate = new Date(transaction.created_at || transaction.date)
-    if (isNaN(purchaseDate)) {
-      console.log('Webhook: Invalid purchase date')
-      return res.status(400).json({ error: 'Invalid purchase date' })
-    }
+    // 4. Cálculo de Data
+    const purchaseDate = new Date(transaction.created_at || transaction.date || new Date())
     const expiresAt = new Date(purchaseDate)
     expiresAt.setDate(purchaseDate.getDate() + 30)
 
     const record = {
       email,
-      product_id: transaction.product_id || 'andromeda',
+      product_id: String(transaction.product_id || 'andromeda'),
       expires_at: expiresAt.toISOString(),
-      transaction_id: String(transactionId),
+      transaction_id: transactionId,
       status: 'active',
       updated_at: new Date().toISOString()
     }
 
-    console.log('Supabase upsert payload:', record)
+    console.log('Upserting no Supabase:', record)
 
+    // 5. Upsert com a Service Role Key (supabaseAdmin)
     const { error } = await supabaseAdmin
       .from('access')
       .upsert(record, { onConflict: 'email' })
 
     if (error) {
-      console.error('Supabase error:', error)
-      return res.status(500).json({ error: 'Supabase upsert failed' })
+      console.error('Erro Supabase:', error.message)
+      return res.status(500).json({ error: 'Erro ao salvar no banco' })
     }
 
-    console.log(`Webhook: Access activated for ${email}, expires ${expiresAt.toISOString()}`)
-    return res.status(200).json({ ok: true })
+    return res.status(200).json({ ok: true, message: 'Acesso liberado' })
   } catch (error) {
-    console.error('Webhook error:', error)
+    console.error('Webhook processing error:', error.message)
     return res.status(500).json({ error: 'Internal server error' })
   }
 }
