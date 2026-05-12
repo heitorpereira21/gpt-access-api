@@ -12,7 +12,13 @@ export default async function handler(req, res) {
     // 2. Extração robusta de dados (tentando vários formatos comuns de plataformas)
     const emailRaw = body?.customer?.email || body?.email || body?.data?.buyer?.email
     const event = body?.event || body?.type || body?.status
-    const transaction_id = String(body?.transaction_id || body?.id || body?.reference)
+    const transaction_id = String(
+      body?.transaction?.id ||
+      body?.transaction_id ||
+      body?.id ||
+      body?.reference ||
+      ''
+    )
 
     if (!emailRaw) {
       return res.status(400).json({ error: 'Email não encontrado no webhook' })
@@ -23,7 +29,7 @@ export default async function handler(req, res) {
     // 3. Lógica de Status
     // Mapeia diferentes nomes de eventos para o seu padrão 'active' ou 'inactive'
     let status = 'inactive'
-    if (['approved', 'payment_approved', 'completed', 'active', 'pago'].includes(event)) {
+    if (['approved', 'payment_approved', 'completed', 'active', 'paid'].includes(event)) {
       status = 'active'
     }
 
