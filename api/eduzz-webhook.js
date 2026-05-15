@@ -12,92 +12,116 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const secret = process.env.EDUZZ_SECRET
-  const signature = req.headers['x-eduzz-signature']
-
-  // Validação de Assinatura
-  if (secret && signature) {
-    try {
-      const rawBody = JSON.stringify(req.body)
-      const hmac = crypto.createHmac('sha256', secret)
-      const hash = hmac.update(rawBody).digest('hex')
-      const expectedSignature = signature.replace('sha256=', '')
-
-      // Comparação simples para evitar erros de Buffer em tamanhos diferentes
-      if (hash !== expectedSignature) {
-        console.log('Webhook: assinatura inválida detectada')
-        // Descomente a linha abaixo se quiser bloquear assinaturas inválidas em produção
-        // return res.status(401).json({ error: 'Invalid signature' })
-      }
-    } catch (err) {
-      console.error('Erro na validação HMAC:', err)
-    }
-  }
-
   try {
+    const secret = process.env.EDUZZ_SECRET
+    const signature = req.headers['x-eduzz-signature']
+
+    // 🔐 validação opcional (não pode quebrar webhook)
+    if (secret && signature) {
+      try {
+        const rawBody = JSON.stringify(req.body)
+        const hmac = crypto.createHmac('sha256', secret)
+        const hash = hmac.update(rawBody).digest('hex')
+        const expectedSignature = signature.replace('sha256=', '')
+
+        if (hash !== expectedSignature) {
+          console.log('Webhook: assinatura inválida detectada')
+        }
+      } catch (err) {
+        console.log('Erro assinatura:', err.message)
+      }
+    }
+
     const payload = req.body
 
-    console.log("RAW BODY:", JSON.stringify(req.body, null, 2))
+    console.log("RAW BODY:", JSON.stringify(payload, null, 2))
 
-    const transaction = payload?.data || payload
+    // 🔥 Eduzz sempre pode vir em data ou direto
+    const data = payload?.data || payload
 
-    console.log("TRANSACTION:", transaction)
-    console.log("STATUS:", transaction?.status)
+    console.log("DATA:", data)
+    console.log("STATUS:", data?.status)
 
-    const status = transaction?.status
+    const status = data?.status
 
+    // 🔥 proteção anti-500 (NUNCA deixar quebrar)
     const validStatuses = ['paid', 'approved', 'payment_approved', 'completed']
 
-    if (!validStatuses.includes(status)) {
+    if (!status || !validStatuses.includes(status)) {
       console.log(`Webhook ignorado. Status recebido: ${status}`)
-      return res.status(200).json({ ok: true, ignored: true, received_status: status })
+      return res.status(200).json({
+        ok: true,
+        ignored: true,
+        received_status: status || null
+      })
     }
 
-    // 2. Extração do e-mail com fallback total
+    // 🔥 email seguro
     const rawEmail =
-      transaction?.buyer?.email ||
-      transaction?.customer?.email ||
-      transaction?.email ||
-      transaction?.student?.email
+      data?.buyer?.email ||
+      data?.student?.email ||
+      data?.customer?.email ||
+      data?.email
 
     if (!rawEmail) {
-      console.error('Email não encontrado no payload:', transaction)
-      return res.status(400).json({ error: 'Email não encontrado' })
+      console.log('Sem email no payload')
+      return res.status(200).json({ ok: true, ignored: true, reason: 'no email' })
     }
 
     const email = rawEmail.trim().toLowerCase()
 
-    // 3. Montagem do registro
+    // 🔥 transaction id seguro
+    const transaction_id = String(
+      data?.transaction?.id ||
+      data?.id ||
+      data?.transaction_id ||
+      ''
+    )
+
+    // 🔥 produto seguro
+    const product_id =
+      data?.items?.[0]?.productId ||
+      data?.product_id ||
+      'andromeda'
+
     const record = {
-      email: email,
-      product_id: String(transaction?.product_id || transaction?.items?.[0]?.productId || 'andromeda'),
-      transaction_id: String(transaction?.id || transaction?.transaction_id || ''),
+      email,
+      product_id,
+      transaction_id,
       status: 'active',
       updated_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // +30 dias
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
     }
 
-    console.log('Tentando gravar no Supabase:', record)
+    console.log('SALVANDO:', record)
 
-    // 4. CORREÇÃO NO UPSERT: 
-    // Garanta que 'email' seja a chave única na sua tabela 'access' do Supabase
-    const { data, error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('access')
-      .upsert(record, { onConflict: 'email' }) 
+      .upsert(record, { onConflict: 'email' })
 
     if (error) {
-      console.error('Erro Supabase detalhado:', error.message)
-      return res.status(500).json({ error: 'Erro ao salvar no banco', details: error.message })
+      console.log('SUPABASE ERROR:', error.message)
+
+      // 🔥 NÃO quebra webhook por erro de banco
+      return res.status(200).json({
+        ok: false,
+        supabase_error: true
+      })
     }
 
     return res.status(200).json({
       ok: true,
-      message: 'Acesso liberado e gravado no banco',
-      email: email
+      message: 'Acesso liberado',
+      email
     })
 
   } catch (error) {
-    console.error('Erro Geral Webhook:', error.message)
-    return res.status(500).json({ error: 'Internal server error' })
+    console.log('WEBHOOK ERROR:', error.message)
+
+    // 🔥 NUNCA deixar virar 500 pra Eduzz
+    return res.status(200).json({
+      ok: false,
+      error: 'handled'
+    })
   }
 }
