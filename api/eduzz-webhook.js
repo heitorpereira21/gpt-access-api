@@ -36,7 +36,11 @@ export default async function handler(req, res) {
 
   try {
     const payload = req.body
-    const transaction = Array.isArray(payload) ? payload[0] : payload
+    const transaction = payload?.transaction || payload
+
+    console.log("RAW BODY:", JSON.stringify(req.body, null, 2))
+    console.log("TRANSACTION:", transaction)
+    console.log("STATUS:", transaction?.status)
 
     // 1. CORREÇÃO: Lista de status ampliada para o que a Eduzz realmente envia
     const validStatuses = [
