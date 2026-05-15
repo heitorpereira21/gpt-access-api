@@ -1,10 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
-
-// Usar a chave anon ou service role, dependendo da sua config de RLS
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-)
+import { supabase } from '../lib/supabase'
 
 export default async function handler(req, res) {
   try {
