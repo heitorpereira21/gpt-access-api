@@ -15,6 +15,17 @@ export default async function handler(req, res) {
   const secret = process.env.EDUZZ_SECRET
   const signature = req.headers['x-eduzz-signature']
 
+  const { data, error } = await supabaseAdmin
+  .from("clientes")
+  .insert([
+    {
+      email: "teste@gmail.com"
+    }
+  ])
+
+console.log(data)
+console.log(error)
+
   // Validação de Assinatura
   if (secret && signature) {
     try {
