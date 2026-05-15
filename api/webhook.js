@@ -14,20 +14,20 @@ export default async function handler(req, res) {
 
   try {
     const emailRaw =
+      body?.data?.buyer?.email ||
       body?.buyer?.email ||
       body?.student?.email ||
       body?.customer?.email ||
       body?.email
 
     const status =
-      body?.status ||
-      body?.transaction?.status ||
-      body?.data?.status
-      console.log("BODY COMPLETO:", JSON.stringify(req.body, null, 2))
-      console.log("TRANSACTION:", transaction)
-      console.log("STATUS FINAL:", status)
+      body?.data?.status ||
+      body?.status
+
+    console.log("STATUS FINAL:", status)
 
     const transaction_id = String(
+      body?.data?.transaction?.id ||
       body?.transaction?.id ||
       body?.transaction_id ||
       body?.id ||
