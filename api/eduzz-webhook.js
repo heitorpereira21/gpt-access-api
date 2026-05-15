@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '../../lib/supabase'
+import { supabaseAdmin } from '../lib/supabase'
 import crypto from 'crypto'
 
 export const config = {
