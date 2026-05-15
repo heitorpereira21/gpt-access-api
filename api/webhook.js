@@ -19,7 +19,11 @@ export default async function handler(req, res) {
       body?.customer?.email ||
       body?.email
 
-    const status = body?.status || body?.event || body?.type
+    const status =
+      body?.status ||
+      body?.transaction?.status ||
+      body?.data?.status
+      console.log("STATUS FINAL:", status)
 
     const transaction_id = String(
       body?.transaction?.id ||
